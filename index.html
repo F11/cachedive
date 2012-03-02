@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+		<title>cachedive</title>
+		<style>
+			.cd-log { padding: 100px 20%; font: 15px Georgia; }
+			.cd-log-item { background: #ffd; padding: 5px 5px 10px; margin: 5px; box-shadow: 5px 5px 5px #bbb;
+				-webkit-box-shadow: 5px 5px 5px #bbb; -moz-box-shadow: 5px 5px 5px #bbb; overflow: hidden; }
+			.cd-drop { background: #efe; position: relative; }
+			.cd-drop div { border: 2px dashed #ded; padding: 5px 5px 100px; }
+			.cd-drop input { position: absolute; bottom: 5px; left: 5px; }
+			.title { font-size: 30px; color: #fff; background: #000; }
+			.warm { background: #feb; }
+			.hot { background: #fdd; }
+			a { color: #0a0; text-decoration: none; font-weight: bold; }
+			a:hover { color: #4af; }
+			a:hover:after { content: " <---- "; }
+			.nav { list-style-type: none; }
+			.nav li { display: inline; margin: 0px 10px; }
+			.cd-entry { float: left; height: 200px; width: 30%; background: #feb; padding: 5px; margin: 5px;
+				overflow: hidden; position: relative; box-shadow: 5px 5px 5px #bbb; -webkit-box-shadow: 5px 5px 5px #bbb; 
+				-moz-box-shadow: 5px 5px 5px #bbb; }
+			.cd-entry:hover { background: #ffc; }
+			.cd-size { position: absolute; top: 5px; right: 5px; font: 10px Georgia; }
+			.cd-access-time { font: 8px Georgia; }
+			.cd-entry audio { position: absolute; bottom: 0px; width: 100%; }
+			.cd-entry textarea { position: absolute; bottom: 0px; left: 0px; width: 99%; height: 80%; font: 10px Georgia; background: #ffe;
+				margin: 0px; border: 0; resize: none; }
+			.example { font: 14px Georgia; font-style: italic; color: #666; }
+		</style>
+	</head>
+	<body>
+		<script>
+
+			var html = function(text, tag, cls) {
+				var div = document.createElement(tag || "div");
+				if(cls) div.className = cls;
+				if(text) div.textContent = text;
+				return div;
+			};
+
+			var fileSize = function(size) {
+				if(size < 1000) return size + " bytes";
+				else if(size < 1000000) return size / 1000 + " KB";
+				else return size / 1000000 + " MB";
+			};
+
+			var CD = function() { };
+
+			CD.Log = function() {
+				this.rootElement = document.createElement("div");
+				this.rootElement.className = "cd-log";
+			};
+			CD.Log.prototype.push = function(it, cls) {
+				var div = document.createElement("div");
+				div.className = "cd-log-item";
+				if(it instanceof HTMLElement) {
+					div.appendChild(it);
+				} else {
+					div.textContent = it;
+				}
+				if(cls) {
+					div.classList.add(cls);
+				}
+				this.rootElement.appendChild(div);
+				window.scrollTo(0, document.body.scrollHeight);
+			};
+
+			CD.Drop = function(cb, text) {
+				this.rootElement = document.createElement("div");
+				this.rootElement.className = "cd-drop";
+				if(text) this.rootElement.textContent = text;
+				this.rootElement.addEventListener("dragover", function(evt) {
+					evt.stopPropagation();
+					evt.preventDefault();
+					evt.dataTransfer.dropEffect = 'copy';
+				});
+				this.rootElement.addEventListener("drop", function(evt) {
+					evt.stopPropagation();
+					evt.preventDefault();
+					if(cb) {
+						for(var i = 0; i < evt.dataTransfer.files.length; i++) {
+							cb.call(this, evt.dataTransfer.files[i]);
+						}
+					}
+				});
+				var input = html(0, "input");
+				input.type = "file";
+				input.multiple = true;
+				input.addEventListener("change", function(evt) {
+					if(cb) {
+						for(var i = 0; i < evt.target.files.length; i++) {
+							cb.call(this, evt.target.files[i]);
+						}
+					}
+				});
+				this.rootElement.appendChild(input);
+			};
+
+			CD.AT = {
+				0: "texture",
+				1: "sound",
+				2: "callingcard",
+				3: "landmark",
+				4: "script",
+				5: "clothing",
+				6: "object",
+				7: "notecard",
+				8: "category",
+				9: "root_category",
+				10: "lsl_text",
+				11: "lsl_bytecode",
+				12: "texture_tga",
+				13: "bodypart",
+				14: "trash",
+				15: "snapshot_category",
+				16: "lost_and_found",
+				17: "sound_wav",
+				18: "image_tga",
+				19: "image_jpeg",
+				20: "animation",
+				21: "gesture",
+				22: "simstate"
+			};
+
+			CD.EXT = {
+				0: "texture",
+				1: "ogg",
+				2: "txt",
+				3: "txt",
+				4: "txt",
+				5: "txt",
+				6: "txt",
+				7: "txt",
+				13: "txt",
+				20: "animatn",
+				21: "txt"
+			};
+
+			CD.readIndex = function(file, cb) {
+				var count = Math.floor(file.size / 34);
+				var entries = [];
+				var reader = new FileReader();
+				reader.onload = function(evt) {
+					var filebuf = evt.target.result;
+					for(var i = 0; i < count; i++) {
+						var view = new DataView(filebuf, i * 34, 34);
+						var end = true;
+						var entry = {
+							s_location: view.getUint32(0, end),
+							s_length: view.getUint32(4, end),
+							s_access_time: view.getUint32(8, true),
+							s_fileid: "",
+							s_type: view.getUint16(28, end),
+							s_size: view.getUint32(30, end)
+						};
+						for(var j = 0; j < 16; j++) {
+							var n = view.getUint8(j + 12);
+							entry.s_fileid += (n < 16 ? "0" : "") + n.toString(16);
+							if(j == 3 || j == 5 || j == 7 || j == 9) entry.s_fileid += "-";
+						}
+						entries.push(entry);
+						if(entries.length >= count) {
+							cb(entries);
+						}
+					}
+				};
+				reader.readAsArrayBuffer(file);
+			};
+
+			CD.slice = function(data_file, ent) {
+				var slice = data_file.slice || data_file.webkitSlice || data_file.mozSlice;
+				return slice.call(data_file, ent.s_location, ent.s_location + ent.s_size - 1);
+			};
+
+			CD.createObjectURL = function(data_file, ent) {
+				var URL = window.URL || window.webkitURL || window.mozURL || window.ieURL || window.oURL;
+				return URL.createObjectURL(CD.slice(data_file, ent));
+			};
+
+			
+			(function() {
+				var log = new CD.Log();
+				document.body.appendChild(log.rootElement);
+				log.push("cachedive", "title");
+
+				if(!window.DataView || !window.FileReader) {
+					log.push("The browser doesn't support.");
+					return;
+					window.lrn2support();
+				}
+
+				var onDrop = function(file) {
+					if(file.name.indexOf("index.db2") !== -1) {
+						log.push("Reading \"index\" from " + file.name + ".");
+						CD.readIndex(file, function(ind) {
+							index = ind;
+							setTimeout(onHas, 100);
+						});
+					} else if(file.name.indexOf("data.db2") !== -1) {
+						log.push("Using " + file.name + " as \"data.\"");
+						data = file;
+						setTimeout(onHas, 100);
+					} else {
+						log.push("What's that?", "hot");
+					}
+				};
+				var drop = new CD.Drop(onDrop, "Drop \"*index.db2*,\" \"*data.db2*,\" or both, here.").rootElement;
+				drop.appendChild(html("Example 1", "p", "example"));
+				drop.appendChild(html("C:\\Documents and Settings\\user\\Application Data\\SecondLife\\cache\\index.db2.x.32222", "p", "example"));
+				drop.appendChild(html("C:\\Documents and Settings\\user\\Application Data\\SecondLife\\cache\\data.db2.x.32222", "p", "example"));
+				drop.appendChild(html("Example 2", "p", "example"));
+				drop.appendChild(html("C:\\Program Files\\Second Life\\app_settings\\static_index.db2", "p", "example"));
+				drop.appendChild(html("C:\\Program Files\\Second Life\\app_settings\\static_data.db2", "p", "example"));
+				log.push(drop, "cd-drop");
+				
+				var index = undefined;
+				var data = undefined;
+				var busy = false;
+				var onHas = function() {
+					if(busy) {
+						//log.push("You should probably just reload the page if you want to start over.", "hot");
+					} else if(!index) {
+						log.push(new CD.Drop(onDrop, "Still need \"*index.db2*.\"").rootElement, "cd-drop");
+					}
+					else if(!data) {
+						log.push(new CD.Drop(onDrop, "Still need \"*data.db2*.\"").rootElement, "cd-drop");
+					} else {
+						busy = true;
+						var counts = [];
+						for(var i = 0; i < index.length; i++) {
+							var type = index[i].s_type;
+							counts[type] = counts[type] === undefined ? 0 : counts[type] + 1;
+						}
+						var div = document.createElement("div");
+						var p = document.createElement("p");
+						p.textContent = "There are " + index.length + " entries:";
+						div.appendChild(p);
+						var ul = document.createElement("ul");
+						for(var i in counts) {
+							var li = document.createElement("li");
+							var type = CD.AT[i] ? CD.AT[i] : "type " + i + " (what's that?)";
+							var a = document.createElement("a");
+							a.href = "#" + (CD.AT[i] ? CD.AT[i] + "s" : i);
+							a.textContent = type + "s";
+							var span = document.createElement("span");
+							span.textContent = "(" + counts[i] + ")";
+							li.appendChild(a);
+							li.appendChild(span);
+							ul.appendChild(li);
+						}
+						div.appendChild(ul);
+						log.push(div);
+
+						window.onpopstate = function(evt) {
+							var hash = window.location.hash.substring(1).toLowerCase();
+							var at = parseInt(hash);
+							if(isNaN(at)) {
+								if(hash.substr(-1) === "s") hash = hash.substr(0, hash.length - 1);
+								for(var i in CD.AT) {
+									if(!CD.AT.hasOwnProperty(i)) continue;
+									if(CD.AT[i].toLowerCase() == hash) {
+										at = i;
+										break;
+									}
+								}
+							}
+							at = parseInt(at);
+							if(isNaN(at)) return;
+							
+							ul.className = "nav";
+							document.body.innerHTML = "";
+							document.body.appendChild(ul);
+
+							var dive = document.createElement("div");
+							dive.className = "cd-dive";
+							document.body.appendChild(dive);
+							for(var i = 0; i < index.length; i++) {
+								var ent = index[i];
+								if(ent.s_type === at) {
+									var div = document.createElement("div");
+									div.className = "cd-entry";
+									div["cd-entry"] = ent;
+									var objurl = CD.createObjectURL(data, ent);
+									var id = html(ent.s_fileid, "a", "cd-fileid");
+									id.href = objurl;
+									id.download = ent.s_fileid + "." + (CD.EXT[at] || "txt");
+									div.appendChild(id);
+									div.appendChild(html(fileSize(ent.s_size), "div", "cd-size"));
+									/*var date = new Date();
+									date.setTime(ent.s_access_time);
+									div.appendChild(html(date.toString(), "div", "cd-access-time"));*/
+									div.appendChild(html(ent.s_access_time, "div", "cd-access-time"));
+									var the_div = div;
+									switch(at) {
+										case 0: // texture
+											(function() {
+												var div = the_div;
+												div.appendChild(html("(texture)"));
+											})();
+											break;
+										case 1: // sound
+											(function() {
+												var div = the_div;
+												var audio = html(0, "audio");
+												audio.controls = true;
+												audio.volume = 0.333;
+												audio.src = objurl;
+												div.appendChild(audio);
+												audio.addEventListener("error", function(evt) {
+													div.removeChild(audio);
+													div.appendChild(html("Error..."));
+												});
+												/*var play = false;
+												div.addEventListener("mouseover", function(evt) {
+													if(play) return;
+													play = true;
+													setTimeout(function() {
+														if(play) audio.play();
+													}, 250);
+												});
+												div.addEventListener("mouseout", function(evt) {
+													//if(play && (evt.target == div || evt.target.parentNode == div)) {
+														play = false;
+														audio.pause();
+														audio.currentTime = 0;
+													//}
+												});*/
+												div.addEventListener("click", function(evt) {
+													if(evt.target == div) {
+														audio.currentTime = 0;
+														if(audio.paused) audio.play();
+														else audio.pause();
+													}
+												});
+											})();
+											break;
+										case 20: // animation
+											(function() {
+												var div = the_div;
+												div.appendChild(html("(animation)"));
+											})();
+											break;
+										default:
+											(function() {
+												var div = the_div;
+												var file = CD.slice(data, ent);
+												var reader = new FileReader();
+												reader.readAsText(file);
+												reader.onload = function(evt) {
+													var ta = html(evt.target.result, "textarea");
+													ta.disabled = true;
+													div.appendChild(ta);
+												};
+											})();
+											break;
+									}
+									dive.appendChild(div);
+								}
+							}
+
+						};
+					}
+				};
+			})();
+
+		</script>
+	</body>
+</html>
